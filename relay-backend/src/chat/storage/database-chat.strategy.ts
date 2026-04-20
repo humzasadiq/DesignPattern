@@ -46,7 +46,10 @@ export class DatabaseChatStrategy extends ChatStorageStrategy {
   async listConversationsForUser(userId: string): Promise<StoredConversation[]> {
     const convs = await this.prisma.conversation.findMany({
       where: { memberships: { some: { userId } } },
-      include: { memberships: true },
+      include: {
+        memberships: true,
+        messages: { orderBy: { createdAt: 'desc' }, take: 1 },
+      },
       orderBy: { createdAt: 'desc' },
     });
     return convs.map(toStored);
@@ -112,6 +115,10 @@ export class DatabaseChatStrategy extends ChatStorageStrategy {
     });
   }
 
+  async deleteConversation(id: string): Promise<void> {
+    await this.prisma.conversation.delete({ where: { id } });
+  }
+
   async saveConversationKeys(
     conversationId: string,
     wrappedKeys: Record<string, string>,
@@ -146,6 +153,7 @@ function toStored(conv: {
   name: string | null;
   createdAt: Date;
   memberships: { userId: string }[];
+  messages?: { id: string; conversationId: string; senderId: string; ciphertext: string; nonce: string; createdAt: Date }[];
 }): StoredConversation {
   return {
     id: conv.id,
@@ -154,5 +162,6 @@ function toStored(conv: {
     memberIds: conv.memberships.map((m) => m.userId),
     temporary: false,
     createdAt: conv.createdAt,
+    lastMessage: conv.messages?.[0] ?? null,
   };
 }

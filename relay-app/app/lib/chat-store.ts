@@ -16,6 +16,10 @@ interface ChatState {
   conversations: Conversation[];
   activeId: string | null;
   messagesByConv: Record<string, ChatMessage[]>;
+  /** Conversations whose full history has been fetched */
+  historyLoadedConvs: Record<string, true>;
+  /** ID of the conversation currently having its history fetched */
+  loadingConvId: string | null;
   unreadByConv: Record<string, number>;
   /** ISO timestamp when the temp session started, keyed by conversationId */
   tempSessionByConv: Record<string, string | null>;
@@ -39,6 +43,8 @@ interface ChatState {
   setTempSession: (conversationId: string, since: string) => void;
   clearTempSession: (conversationId: string, since: string) => void;
   toggleTempSession: (accessToken: string, conversationId: string) => void;
+  deleteConversation: (accessToken: string, id: string) => Promise<void>;
+  removeConversation: (id: string) => void;
   reset: () => void;
 }
 
@@ -135,6 +141,8 @@ export const useChat = create<ChatState>((set, get) => ({
   conversations: [],
   activeId: null,
   messagesByConv: {},
+  historyLoadedConvs: {},
+  loadingConvId: null,
   unreadByConv: {},
   tempSessionByConv: {},
   loading: false,
@@ -160,6 +168,19 @@ export const useChat = create<ChatState>((set, get) => ({
     } finally {
       set({ loading: false });
     }
+    // Decrypt last-message previews in the background (after loading clears)
+    const convs = get().conversations;
+    await Promise.all(
+      convs
+        .filter((c) => c.lastMessage && !get().historyLoadedConvs[c.id])
+        .map(async (c) => {
+          const decrypted = await tryDecrypt(accessToken, c.lastMessage!, c.memberIds);
+          set((s) => {
+            if (s.historyLoadedConvs[c.id]) return s;
+            return { messagesByConv: { ...s.messagesByConv, [c.id]: [decrypted] } };
+          });
+        }),
+    );
   },
 
   async openConversation(accessToken, id) {
@@ -167,16 +188,23 @@ export const useChat = create<ChatState>((set, get) => ({
     get().markRead(id);
     const socket = getSocket(accessToken);
     socket.emit("chat:join", { conversationId: id });
-    if (!get().messagesByConv[id]) {
-      const history = await api.getHistory(accessToken, id);
-      const conv = get().conversations.find((c) => c.id === id);
-      const memberIds = conv?.memberIds;
-      const decrypted = await Promise.all(
-        history.map((m) => tryDecrypt(accessToken, m, memberIds)),
-      );
-      set((s) => ({
-        messagesByConv: { ...s.messagesByConv, [id]: decrypted },
-      }));
+    if (!get().historyLoadedConvs[id]) {
+      set({ loadingConvId: id });
+      try {
+        const history = await api.getHistory(accessToken, id);
+        const conv = get().conversations.find((c) => c.id === id);
+        const memberIds = conv?.memberIds;
+        const decrypted = await Promise.all(
+          history.map((m) => tryDecrypt(accessToken, m, memberIds)),
+        );
+        set((s) => ({
+          messagesByConv: { ...s.messagesByConv, [id]: decrypted },
+          historyLoadedConvs: { ...s.historyLoadedConvs, [id]: true },
+          loadingConvId: null,
+        }));
+      } catch {
+        set({ loadingConvId: null });
+      }
     }
   },
 
@@ -276,11 +304,39 @@ export const useChat = create<ChatState>((set, get) => ({
     socket.emit("temp:toggle", { conversationId });
   },
 
+  async deleteConversation(accessToken, id) {
+    await api.deleteConversation(accessToken, id);
+    get().removeConversation(id);
+  },
+
+  removeConversation(id) {
+    set((s) => {
+      const messagesByConv = { ...s.messagesByConv };
+      const historyLoadedConvs = { ...s.historyLoadedConvs };
+      const unreadByConv = { ...s.unreadByConv };
+      const tempSessionByConv = { ...s.tempSessionByConv };
+      delete messagesByConv[id];
+      delete historyLoadedConvs[id];
+      delete unreadByConv[id];
+      delete tempSessionByConv[id];
+      return {
+        conversations: s.conversations.filter((c) => c.id !== id),
+        activeId: s.activeId === id ? null : s.activeId,
+        messagesByConv,
+        historyLoadedConvs,
+        unreadByConv,
+        tempSessionByConv,
+      };
+    });
+  },
+
   reset() {
     set({
       conversations: [],
       activeId: null,
       messagesByConv: {},
+      historyLoadedConvs: {},
+      loadingConvId: null,
       unreadByConv: {},
       tempSessionByConv: {},
     });

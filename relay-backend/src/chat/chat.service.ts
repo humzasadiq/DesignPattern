@@ -27,6 +27,11 @@ export interface ConversationCreatedEvent {
   conv: StoredConversation;
 }
 
+export interface ConversationDeletedEvent {
+  conversationId: string;
+  memberIds: string[];
+}
+
 @Injectable()
 export class ChatService {
   /**
@@ -36,6 +41,7 @@ export class ChatService {
    */
   readonly messageCreated$ = new Subject<MessageCreatedEvent>();
   readonly conversationCreated$ = new Subject<ConversationCreatedEvent>();
+  readonly conversationDeleted$ = new Subject<ConversationDeletedEvent>();
   readonly tempStarted$ = new Subject<TempSessionEvent>();
   readonly tempEnded$ = new Subject<TempSessionEvent>();
 
@@ -92,6 +98,14 @@ export class ChatService {
 
   listConversations(userId: string): Promise<StoredConversation[]> {
     return this.storage.listConversationsForUser(userId);
+  }
+
+  async deleteConversation(userId: string, conversationId: string): Promise<void> {
+    const conv = await this.requireMember(conversationId, userId);
+    const memberIds = [...conv.memberIds];
+    this.tempSessions.delete(conversationId);
+    await this.storage.deleteConversation(conversationId);
+    this.conversationDeleted$.next({ conversationId, memberIds });
   }
 
   async getHistory(

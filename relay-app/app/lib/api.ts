@@ -42,6 +42,8 @@ export interface Conversation {
   tempSessionSince: string | null;
   temporary: boolean;
   createdAt: string;
+  /** Most recent message — encrypted, populated by the list endpoint */
+  lastMessage?: ChatMessage | null;
 }
 
 export interface ChatMessage {
@@ -148,6 +150,12 @@ export const api = {
       `/chat/conversations/${conversationId}/messages`,
       { accessToken },
     ),
+
+  deleteConversation: (accessToken: string, conversationId: string) =>
+    request<void>(`/chat/conversations/${conversationId}`, {
+      method: "DELETE",
+      accessToken,
+    }),
 
   getMyWrappedKey: (accessToken: string, conversationId: string) =>
     request<{ wrappedKey: string | null }>(

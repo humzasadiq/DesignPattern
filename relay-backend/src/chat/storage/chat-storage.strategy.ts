@@ -26,6 +26,7 @@ export interface StoredConversation {
   memberIds: string[];
   temporary: boolean;
   createdAt: Date;
+  lastMessage?: StoredMessage | null;
 }
 
 export interface CreateConversationInput {
@@ -98,4 +99,7 @@ export abstract class ChatStorageStrategy {
     conversationId: string,
     since: Date,
   ): Promise<void>;
+
+  /** Permanently delete a conversation and all its messages. */
+  abstract deleteConversation(id: string): Promise<void>;
 }

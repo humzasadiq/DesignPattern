@@ -1,7 +1,9 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
+  HttpCode,
   Param,
   ParseIntPipe,
   Post,
@@ -77,6 +79,15 @@ export class ChatController {
   async list(@CurrentUser() user: AuthenticatedUser) {
     const convs = await this.chat.listConversations(user.sub);
     return Promise.all(convs.map((c) => this.enrich(c)));
+  }
+
+  @Delete('conversations/:id')
+  @HttpCode(204)
+  async deleteConversation(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ) {
+    await this.chat.deleteConversation(user.sub, id);
   }
 
   @Get('conversations/:id/messages')
