@@ -21,7 +21,7 @@ import { TextScramble } from "../../../_components/ui/text-scramble";
 import { useAuth } from "../../../lib/auth-store";
 import { useCallStore } from "../../../lib/call-store";
 import { useChat } from "../../../lib/chat-store";
-import { Conversation } from "../../../lib/api";
+import { api, ApiError, Conversation, PublicUser } from "../../../lib/api";
 
 /* ── helpers ─────────────────────────────────────────────────────── */
 
@@ -286,10 +286,67 @@ export default function ChatPage() {
     conv?.type === "DIRECT"
       ? conv.memberIds.find((mid) => mid !== myId) ?? null
       : null;
+  const isOwner = conv?.type === "GROUP" && conv.ownerId === myId;
 
   const startCall = (isVideo: boolean) => {
     if (!accessToken || !id || !otherId) return;
     initiateCall(accessToken, { conversationId: id, recipientId: otherId, isVideo });
+  };
+
+  // ── Group management state ──────────────────────────────────────────
+  const { addGroupMember, removeGroupMember } = useChat();
+  const [showMembers, setShowMembers] = useState(false);
+  const [showAddMember, setShowAddMember] = useState(false);
+  const [amEmail, setAmEmail] = useState("");
+  const [amCandidate, setAmCandidate] = useState<PublicUser | null>(null);
+  const [amSearching, setAmSearching] = useState(false);
+  const [amError, setAmError] = useState<string | null>(null);
+  const [amWorking, setAmWorking] = useState(false);
+  const [removingId, setRemovingId] = useState<string | null>(null);
+
+  const searchMember = async () => {
+    if (!accessToken || !amEmail) return;
+    setAmSearching(true);
+    setAmError(null);
+    setAmCandidate(null);
+    try {
+      const [found] = await api.searchUsers(accessToken, amEmail);
+      if (!found) { setAmError("No user with that email."); return; }
+      if (conv?.memberIds.includes(found.id)) { setAmError("Already a member."); return; }
+      setAmCandidate(found);
+    } catch (e) {
+      setAmError(e instanceof ApiError ? e.message : "Search failed");
+    } finally {
+      setAmSearching(false);
+    }
+  };
+
+  const doAddMember = async () => {
+    if (!accessToken || !id || !amCandidate) return;
+    setAmWorking(true);
+    setAmError(null);
+    try {
+      await addGroupMember(accessToken, id, amCandidate);
+      setAmEmail("");
+      setAmCandidate(null);
+      setShowAddMember(false);
+    } catch (e) {
+      setAmError(e instanceof ApiError ? e.message : "Could not add member");
+    } finally {
+      setAmWorking(false);
+    }
+  };
+
+  const doRemoveMember = async (userId: string) => {
+    if (!accessToken || !id) return;
+    setRemovingId(userId);
+    try {
+      await removeGroupMember(accessToken, id, userId);
+    } catch {
+      // stay in panel; user can retry
+    } finally {
+      setRemovingId(null);
+    }
   };
   // Baseline for "new message" detection — anything with createdAt
   // after this moment scrambles on first render.
@@ -329,7 +386,7 @@ export default function ChatPage() {
     <main className="flex-1 flex flex-col min-h-0">
       {/* Header */}
       <header className="flex items-center gap-3 px-5 py-3 border-b bg-surface shrink-0" style={{ borderColor: "var(--border)" }}>
-        <Avatar name={conv ? convAvatarSeed(conv, myId) : title} size={40} />
+        <Avatar name={conv ? convAvatarSeed(conv, myId) : title} size={40} variant={conv?.type === "GROUP" ? "pixel" : "beam"} />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <span className="text-sm font-semibold truncate">{title}</span>
@@ -364,38 +421,126 @@ export default function ChatPage() {
               <path d="M6.8 4.7a10.45 10.45 0 0 0-2.1 2.1" />
             </svg>
           </button>
-          {otherId && (
+          {/* DIRECT: video + voice call */}
+          {conv?.type === "DIRECT" && otherId && (
             <>
-              <button
-                onClick={() => startCall(true)}
-                disabled={!!activeCall}
-                title="Video call"
-                className="w-9 h-9 rounded-full flex items-center justify-center hover:bg-surface-hover transition-colors text-muted disabled:opacity-40"
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <polygon points="23 7 16 12 23 17 23 7" />
-                  <rect x="1" y="5" width="15" height="14" rx="2" />
-                </svg>
+              <button onClick={() => startCall(true)} disabled={!!activeCall} title="Video call" className="w-9 h-9 rounded-full flex items-center justify-center hover:bg-surface-hover transition-colors text-muted disabled:opacity-40">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="23 7 16 12 23 17 23 7" /><rect x="1" y="5" width="15" height="14" rx="2" /></svg>
               </button>
-              <button
-                onClick={() => startCall(false)}
-                disabled={!!activeCall}
-                title="Voice call"
-                className="w-9 h-9 rounded-full flex items-center justify-center hover:bg-surface-hover transition-colors text-muted disabled:opacity-40"
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 13.5a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 2.75h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" />
-                </svg>
+              <button onClick={() => startCall(false)} disabled={!!activeCall} title="Voice call" className="w-9 h-9 rounded-full flex items-center justify-center hover:bg-surface-hover transition-colors text-muted disabled:opacity-40">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 13.5a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 2.75h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" /></svg>
               </button>
             </>
           )}
-          <button className="w-9 h-9 rounded-full flex items-center justify-center hover:bg-surface-hover transition-colors text-muted">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" />
-            </svg>
-          </button>
+
+          {/* GROUP: members panel + add member (owner only) */}
+          {conv?.type === "GROUP" && (
+            <>
+              <button onClick={() => setShowMembers(true)} title="Members" className="w-9 h-9 rounded-full flex items-center justify-center hover:bg-surface-hover transition-colors text-muted">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+              </button>
+              {isOwner && (
+                <button onClick={() => setShowAddMember(true)} title="Add member" className="w-9 h-9 rounded-full flex items-center justify-center hover:bg-surface-hover transition-colors text-muted">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="16" y1="11" x2="22" y2="11"/></svg>
+                </button>
+              )}
+            </>
+          )}
         </div>
       </header>
+
+      {/* Members panel modal */}
+      {showMembers && conv?.type === "GROUP" && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={() => setShowMembers(false)}>
+          <div className="w-full max-w-sm rounded-2xl shadow-2xl flex flex-col overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--border)" }} onClick={(e) => e.stopPropagation()}>
+            <header className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: "var(--border)" }}>
+              <h2 className="text-base font-semibold">Members · {conv.memberIds.length}</h2>
+              <button onClick={() => setShowMembers(false)} className="rounded-full w-7 h-7 flex items-center justify-center hover:bg-surface-hover text-muted">×</button>
+            </header>
+            <ul className="flex flex-col gap-0 py-2 max-h-80 overflow-y-auto">
+              {conv.memberIds.map((uid) => {
+                const name = conv.memberNames[uid] ?? uid;
+                const email = conv.memberEmails[uid] ?? uid;
+                const isMe = uid === myId;
+                const isConvOwner = uid === conv.ownerId;
+                return (
+                  <li key={uid} className="flex items-center gap-3 px-4 py-2.5 hover:bg-surface-hover">
+                    <Avatar name={email} size={36} />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium truncate">{name}{isMe ? " (you)" : ""}{isConvOwner ? " · owner" : ""}</div>
+                      <div className="text-xs truncate" style={{ color: "var(--muted)" }}>{email}</div>
+                    </div>
+                    {isOwner && !isMe && (
+                      <button
+                        onClick={() => doRemoveMember(uid)}
+                        disabled={removingId === uid}
+                        className="shrink-0 text-xs px-2.5 py-1 rounded-lg transition-colors disabled:opacity-50"
+                        style={{ color: "#ef4444", background: "color-mix(in srgb, #ef4444 10%, transparent)" }}
+                      >
+                        {removingId === uid ? "…" : "Remove"}
+                      </button>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+            {isOwner && (
+              <div className="px-4 py-3 border-t" style={{ borderColor: "var(--border)" }}>
+                <button
+                  onClick={() => { setShowMembers(false); setShowAddMember(true); }}
+                  className="w-full rounded-lg py-2 text-sm font-medium transition-colors"
+                  style={{ background: "var(--surface-2)", color: "var(--text)" }}
+                >+ Add member</button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Add member modal */}
+      {showAddMember && conv?.type === "GROUP" && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={() => { setShowAddMember(false); setAmEmail(""); setAmCandidate(null); setAmError(null); }}>
+          <div className="w-full max-w-sm rounded-2xl shadow-2xl flex flex-col overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--border)" }} onClick={(e) => e.stopPropagation()}>
+            <header className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: "var(--border)" }}>
+              <h2 className="text-base font-semibold">Add member</h2>
+              <button onClick={() => { setShowAddMember(false); setAmEmail(""); setAmCandidate(null); setAmError(null); }} className="rounded-full w-7 h-7 flex items-center justify-center hover:bg-surface-hover text-muted">×</button>
+            </header>
+            <div className="flex flex-col gap-3 px-5 py-4">
+              <div className="flex gap-2">
+                <input
+                  type="email"
+                  placeholder="email@example.com"
+                  value={amEmail}
+                  onChange={(e) => setAmEmail(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void searchMember(); } }}
+                  autoFocus
+                  className="flex-1 rounded-lg border bg-surface-2 px-3 py-2 text-sm outline-none focus:border-primary"
+                  style={{ borderColor: "var(--border)" }}
+                />
+                <button onClick={searchMember} disabled={amSearching || !amEmail} className="rounded-lg bg-primary text-on-primary px-4 text-sm font-medium disabled:opacity-50">
+                  {amSearching ? "…" : "Find"}
+                </button>
+              </div>
+              {amCandidate && (
+                <div className="rounded-xl border p-3 flex items-center gap-3" style={{ background: "var(--surface-2)", borderColor: "var(--border)" }}>
+                  <Avatar name={amCandidate.email} size={36} />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium truncate">{amCandidate.displayName}</div>
+                    <div className="text-xs truncate" style={{ color: "var(--muted)" }}>{amCandidate.email}</div>
+                  </div>
+                </div>
+              )}
+              {amError && <p className="text-xs" style={{ color: "#ef4444" }}>{amError}</p>}
+            </div>
+            <div className="flex justify-end gap-2 px-5 py-3 border-t" style={{ borderColor: "var(--border)", background: "var(--surface-2)" }}>
+              <button onClick={() => { setShowAddMember(false); setAmEmail(""); setAmCandidate(null); setAmError(null); }} className="rounded-lg px-4 py-2 text-sm font-medium hover:bg-surface-hover">Cancel</button>
+              <button onClick={doAddMember} disabled={!amCandidate || amWorking} className="rounded-lg bg-primary text-on-primary px-4 py-2 text-sm font-medium disabled:opacity-50">
+                {amWorking ? "Adding…" : "Add"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Temporary-chat banner */}
       {conv?.temporary && (

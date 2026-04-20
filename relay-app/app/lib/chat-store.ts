@@ -33,6 +33,23 @@ interface ChatState {
     other: PublicUser,
     options: { temporary: boolean },
   ) => Promise<Conversation>;
+  startGroup: (
+    accessToken: string,
+    me: PublicUser,
+    members: PublicUser[],
+    name: string,
+  ) => Promise<Conversation>;
+  addGroupMember: (
+    accessToken: string,
+    conversationId: string,
+    newMember: PublicUser,
+  ) => Promise<void>;
+  removeGroupMember: (
+    accessToken: string,
+    conversationId: string,
+    userId: string,
+  ) => Promise<void>;
+  patchConversation: (updated: Conversation) => void;
   sendMessage: (
     accessToken: string,
     conversationId: string,
@@ -234,6 +251,78 @@ export const useChat = create<ChatState>((set, get) => ({
     const socket = getSocket(accessToken);
     socket.emit("chat:join", { conversationId: conv.id });
     return conv;
+  },
+
+  async startGroup(accessToken, me, members, name) {
+    const priv = keyStore.getPrivateBundle();
+    if (!priv) throw new Error("Keys not ready — please log in again.");
+    const convKey = await generateConversationKey();
+    const wrappedKeys: Record<string, string> = {
+      [me.id]: await wrapConversationKey(convKey, priv.exchangePubKey),
+    };
+    for (const member of members) {
+      const exchangePubKey =
+        member.exchangePubKey ??
+        (await api.getUserKeys(accessToken, member.id)).exchangePubKey;
+      if (!exchangePubKey)
+        throw new Error(`${member.displayName} has no encryption keys yet.`);
+      wrappedKeys[member.id] = await wrapConversationKey(convKey, exchangePubKey);
+    }
+    const conv = await api.createConversation(accessToken, {
+      type: "GROUP",
+      name,
+      memberIds: members.map((m) => m.id),
+      wrappedKeys,
+    });
+    keyStore.setConversationKey(conv.id, convKey);
+    set((s) => ({ conversations: [conv, ...s.conversations] }));
+    const socket = getSocket(accessToken);
+    socket.emit("chat:join", { conversationId: conv.id });
+    return conv;
+  },
+
+  async addGroupMember(accessToken, conversationId, newMember) {
+    const conv = get().conversations.find((c) => c.id === conversationId);
+    if (!conv) return;
+    const convKey = await ensureConversationKey(accessToken, conversationId, conv.memberIds);
+    if (!convKey) throw new Error("Cannot access conversation key.");
+    const exchangePubKey =
+      newMember.exchangePubKey ??
+      (await api.getUserKeys(accessToken, newMember.id)).exchangePubKey;
+    if (!exchangePubKey) throw new Error(`${newMember.displayName} has no encryption keys yet.`);
+    const wrappedKey = await wrapConversationKey(convKey, exchangePubKey);
+    const updated = await api.addGroupMember(accessToken, conversationId, newMember.id, wrappedKey);
+    set((s) => ({
+      conversations: s.conversations.map((c) => (c.id === conversationId ? updated : c)),
+    }));
+  },
+
+  async removeGroupMember(accessToken, conversationId, userId) {
+    const conv = get().conversations.find((c) => c.id === conversationId);
+    if (!conv) return;
+    await api.removeGroupMember(accessToken, conversationId, userId);
+    // Rotate key: generate fresh one and wrap for all remaining members
+    const remainingIds = conv.memberIds.filter((id) => id !== userId);
+    const newKey = await generateConversationKey();
+    const wrappedKeys: Record<string, string> = {};
+    for (const memberId of remainingIds) {
+      const { exchangePubKey } = await api.getUserKeys(accessToken, memberId);
+      if (!exchangePubKey) continue;
+      wrappedKeys[memberId] = await wrapConversationKey(newKey, exchangePubKey);
+    }
+    await api.upsertConversationKeys(accessToken, conversationId, wrappedKeys);
+    keyStore.setConversationKey(conversationId, newKey);
+    set((s) => ({
+      conversations: s.conversations.map((c) =>
+        c.id === conversationId ? { ...c, memberIds: remainingIds } : c,
+      ),
+    }));
+  },
+
+  patchConversation(updated) {
+    set((s) => ({
+      conversations: s.conversations.map((c) => (c.id === updated.id ? updated : c)),
+    }));
   },
 
   async sendMessage(accessToken, conversationId, text) {

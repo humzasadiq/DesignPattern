@@ -81,6 +81,26 @@ export class ChatController {
     return Promise.all(convs.map((c) => this.enrich(c)));
   }
 
+  @Post('conversations/:id/members')
+  async addMember(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body() body: { userId: string; wrappedKey: string },
+  ) {
+    const conv = await this.chat.addGroupMember(id, user.sub, body.userId, body.wrappedKey);
+    return this.enrich(conv);
+  }
+
+  @Delete('conversations/:id/members/:userId')
+  @HttpCode(204)
+  async removeMember(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Param('userId') userId: string,
+  ) {
+    await this.chat.removeGroupMember(id, user.sub, userId);
+  }
+
   @Delete('conversations/:id')
   @HttpCode(204)
   async deleteConversation(

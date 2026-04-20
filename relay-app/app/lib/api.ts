@@ -34,6 +34,8 @@ export interface Conversation {
   type: "DIRECT" | "GROUP";
   name: string | null;
   memberIds: string[];
+  /** userId of the group owner; null for DIRECT conversations */
+  ownerId: string | null;
   /** displayName keyed by userId — populated by the backend */
   memberNames: Record<string, string>;
   /** email keyed by userId — stable avatar seed */
@@ -172,6 +174,28 @@ export const api = {
       method: "POST",
       accessToken,
       body: JSON.stringify({ wrappedKeys }),
+    }),
+
+  addGroupMember: (
+    accessToken: string,
+    conversationId: string,
+    userId: string,
+    wrappedKey: string,
+  ) =>
+    request<Conversation>(`/chat/conversations/${conversationId}/members`, {
+      method: "POST",
+      accessToken,
+      body: JSON.stringify({ userId, wrappedKey }),
+    }),
+
+  removeGroupMember: (
+    accessToken: string,
+    conversationId: string,
+    userId: string,
+  ) =>
+    request<void>(`/chat/conversations/${conversationId}/members/${userId}`, {
+      method: "DELETE",
+      accessToken,
     }),
 
   saveMyKeyBundle: (

@@ -69,6 +69,28 @@ export class ChatGateway
         since: event.since.toISOString(),
       });
     });
+    this.chat.memberAdded$.subscribe((event) => {
+      // Notify the new member so their sidebar picks up the conversation
+      this.server
+        .to(`user:${event.addedUserId}`)
+        .emit('conv:new', { conversationId: event.conversationId });
+      // Notify everyone already in the room to refresh their member list
+      this.server.to(event.conversationId).emit('group:member-added', {
+        conversationId: event.conversationId,
+        userId: event.addedUserId,
+      });
+    });
+    this.chat.memberRemoved$.subscribe((event) => {
+      // Tell the removed user their membership is gone
+      this.server
+        .to(`user:${event.removedUserId}`)
+        .emit('group:kicked', { conversationId: event.conversationId });
+      // Tell remaining members to refresh (and rotate key cache)
+      this.server.to(event.conversationId).emit('group:member-removed', {
+        conversationId: event.conversationId,
+        userId: event.removedUserId,
+      });
+    });
   }
 
   async handleConnection(client: AuthedSocket) {

@@ -27,15 +27,23 @@ export function CallOverlay() {
   } = useCallStore();
 
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
+  const remoteAudioRef = useRef<HTMLAudioElement>(null);
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const [duration, setDuration] = useState(0);
   const startTimeRef = useRef<number | null>(null);
 
   useEffect(() => {
-    if (remoteVideoRef.current && remoteStream) {
+    if (!remoteStream) return;
+    // Video call: attach to <video> (carries both video + audio tracks)
+    if (active?.isVideo && remoteVideoRef.current) {
       remoteVideoRef.current.srcObject = remoteStream;
     }
-  }, [remoteStream]);
+    // Audio-only call: attach to hidden <audio> element — without this the
+    // remote stream is set in the store but nothing in the DOM plays it.
+    if (!active?.isVideo && remoteAudioRef.current) {
+      remoteAudioRef.current.srcObject = remoteStream;
+    }
+  }, [remoteStream, active?.isVideo]);
 
   useEffect(() => {
     if (localVideoRef.current && localStream) {
@@ -61,9 +69,15 @@ export function CallOverlay() {
     return conv?.memberNames[peerId] ?? peerId;
   }
 
+  function peerEmail(peerId: string, conversationId: string): string {
+    const conv = conversations.find((c) => c.id === conversationId);
+    return conv?.memberEmails[peerId] ?? peerId;
+  }
+
   /* ── Incoming call ──────────────────────────────────────────────── */
   if (incoming && !active) {
     const callerName = peerName(incoming.callerId, incoming.conversationId);
+    const callerEmail = peerEmail(incoming.callerId, incoming.conversationId);
     return (
       <div className="fixed inset-0 z-50 flex items-end justify-center pb-10 pointer-events-none">
         <div
@@ -74,7 +88,7 @@ export function CallOverlay() {
             minWidth: 300,
           }}
         >
-          <Avatar name={callerName} size={72} />
+          <Avatar name={callerEmail} size={72} />
           <div className="flex flex-col items-center gap-1">
             <span className="text-base font-semibold">{callerName}</span>
             <span className="text-sm" style={{ color: "var(--muted)" }}>
@@ -132,11 +146,15 @@ export function CallOverlay() {
   /* ── Active call ────────────────────────────────────────────────── */
   if (active) {
     const name = peerName(active.peerId, active.conversationId);
+    const email = peerEmail(active.peerId, active.conversationId);
     return (
       <div
         className="fixed inset-0 z-50 flex flex-col"
         style={{ background: "#000" }}
       >
+        {/* Hidden audio element — always present so voice-only calls play audio */}
+        <audio ref={remoteAudioRef} autoPlay playsInline />
+
         {/* Remote video / audio-only fallback */}
         {active.isVideo ? (
           <video
@@ -150,7 +168,7 @@ export function CallOverlay() {
             className="absolute inset-0 flex flex-col items-center justify-center gap-4"
             style={{ background: "#0d0d1a" }}
           >
-            <Avatar name={name} size={96} />
+            <Avatar name={email} size={96} />
             <span className="text-white text-xl font-semibold">{name}</span>
             <span className="text-sm" style={{ color: "rgba(255,255,255,0.5)" }}>
               {formatDuration(duration)}

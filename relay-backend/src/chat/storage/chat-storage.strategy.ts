@@ -24,6 +24,8 @@ export interface StoredConversation {
   type: 'DIRECT' | 'GROUP';
   name: string | null;
   memberIds: string[];
+  /** userId of the OWNER, null for DIRECT conversations */
+  ownerId: string | null;
   temporary: boolean;
   createdAt: Date;
   lastMessage?: StoredMessage | null;

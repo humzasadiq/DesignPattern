@@ -8,6 +8,7 @@ import { Sidebar } from "../_components/sidebar";
 import { useAuth } from "../lib/auth-store";
 import { useCallStore } from "../lib/call-store";
 import { useChat } from "../lib/chat-store";
+import { keyStore } from "../lib/key-store";
 import { closeSocket, getSocket } from "../lib/socket";
 import { useThemeSync } from "../lib/theme-store";
 
@@ -53,14 +54,22 @@ export default function AppLayout({
       if (activeId === d.conversationId) router.replace("/app");
     };
 
-    const onCallIncoming = (d: Parameters<typeof setIncoming>[0]) =>
-      setIncoming(d);
-    const onCallAnswered = (d: { answer: RTCSessionDescriptionInit }) =>
-      void _onAnswer(d.answer);
-    const onCallIceCandidate = (d: { candidate: RTCIceCandidateInit }) =>
-      void _onIceCandidate(d.candidate);
+    const onCallIncoming = (d: Parameters<typeof setIncoming>[0]) => setIncoming(d);
+    const onCallAnswered = (d: { answer: RTCSessionDescriptionInit }) => void _onAnswer(d.answer);
+    const onCallIceCandidate = (d: { candidate: RTCIceCandidateInit }) => void _onIceCandidate(d.candidate);
     const onCallEnded = () => _cleanup();
     const onCallRejected = () => _cleanup();
+
+    // Group membership events
+    const onMemberAdded = () => loadConversations(accessToken);
+    const onMemberRemoved = (d: { conversationId: string }) => {
+      keyStore.clearConversationKey(d.conversationId);
+      loadConversations(accessToken);
+    };
+    const onKicked = (d: { conversationId: string }) => {
+      removeConversation(d.conversationId);
+      if (activeId === d.conversationId) router.replace("/app");
+    };
 
     socket.on("message:new", onMessage);
     socket.on("temp:started", onTempStarted);
@@ -73,6 +82,9 @@ export default function AppLayout({
     socket.on("call:ice-candidate", onCallIceCandidate);
     socket.on("call:ended", onCallEnded);
     socket.on("call:rejected", onCallRejected);
+    socket.on("group:member-added", onMemberAdded);
+    socket.on("group:member-removed", onMemberRemoved);
+    socket.on("group:kicked", onKicked);
     loadConversations(accessToken);
     return () => {
       socket.off("message:new", onMessage);
@@ -86,6 +98,9 @@ export default function AppLayout({
       socket.off("call:ice-candidate", onCallIceCandidate);
       socket.off("call:ended", onCallEnded);
       socket.off("call:rejected", onCallRejected);
+      socket.off("group:member-added", onMemberAdded);
+      socket.off("group:member-removed", onMemberRemoved);
+      socket.off("group:kicked", onKicked);
     };
   }, [accessToken, receive, loadConversations, setTempSession, clearTempSession, removeConversation, activeId, router, setIncoming, _onAnswer, _onIceCandidate, _cleanup]);
 

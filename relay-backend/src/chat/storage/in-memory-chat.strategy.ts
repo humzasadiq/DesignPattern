@@ -29,6 +29,8 @@ export class InMemoryChatStrategy extends ChatStorageStrategy {
       type: input.type,
       name: input.name ?? null,
       memberIds: [...input.memberIds],
+      // First memberIds entry is always the creator (service prepends creatorId)
+      ownerId: input.type === 'GROUP' ? (input.memberIds[0] ?? null) : null,
       temporary: input.temporary,
       createdAt: new Date(),
     };

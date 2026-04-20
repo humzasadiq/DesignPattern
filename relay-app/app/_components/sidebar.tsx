@@ -165,7 +165,7 @@ export function Sidebar() {
                     onClick={() => router.push(`/app/chat/${c.id}`)}
                     className="flex-1 flex items-center gap-3 px-4 py-3 text-left min-w-0"
                   >
-                    <Avatar name={convAvatarSeed(c, myId)} size={48} />
+                    <Avatar name={convAvatarSeed(c, myId)} size={48} variant={c.type === "GROUP" ? "pixel" : "beam"} />
                     <div className="flex-1 min-w-0">
                       <div className="flex items-baseline justify-between gap-1">
                         <span
